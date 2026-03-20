@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "socwarden"
+version = "1.0.0"
+description = "Python SDK for SOCWarden — security event tracking and threat detection."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "SOCWarden", email = "support@socwarden.io" },
+]
+keywords = ["security", "soc", "siem", "event-tracking", "threat-detection"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+flask = ["flask>=2.0"]
+django = ["django>=4.0"]
+fastapi = ["fastapi>=0.100", "starlette>=0.27"]
+
+[project.urls]
+Homepage = "https://socwarden.io"
+Documentation = "https://docs.socwarden.io/sdk/python"
+Repository = "https://github.com/socwarden/python-sdk"
+
+[tool.hatch.build.targets.wheel]
+packages = ["socwarden"]
