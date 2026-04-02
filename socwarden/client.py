@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import logging
 import os
@@ -250,7 +251,9 @@ class SOCWarden:
         if actor_email is not None:
             data["actor_email"] = actor_email
         if ip is not None:
-            data["ip"] = ip
+            clean_ip = SOCWarden._sanitize_ip(ip)
+            if clean_ip is not None:
+                data["ip"] = clean_ip
         if user_agent is not None:
             data["user_agent"] = user_agent
         if metadata is not None:
@@ -290,9 +293,11 @@ class SOCWarden:
             "source": "sdk",
         }
 
-        for field in ("actor_id", "actor_email", "ip", "user_agent", "metadata", "timestamp"):
+        for field in ("actor_id", "actor_email", "user_agent", "metadata", "timestamp"):
             if field in data:
                 payload[field] = data[field]
+        if "ip" in data and data["ip"]:
+            payload["ip"] = data["ip"]
 
         if self._auto_context:
             payload["context"] = self._collect_context()
@@ -358,6 +363,20 @@ class SOCWarden:
                 context.update(browser_context)
 
         return context
+
+    @staticmethod
+    def _sanitize_ip(ip: str | None) -> str | None:
+        """Return ip if it's a valid IPv4/IPv6 address, otherwise None.
+
+        Matches the ingestor's validate:"omitempty,ip" constraint.
+        """
+        if not ip:
+            return None
+        try:
+            ipaddress.ip_address(ip)
+            return ip
+        except ValueError:
+            return None
 
     @staticmethod
     def _sanitize_query_string(qs: str) -> str:
