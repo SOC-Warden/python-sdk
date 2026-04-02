@@ -378,6 +378,43 @@ class TestSanitizeQueryString:
 
 
 # ---------------------------------------------------------------------------
+# 6b. _sanitize_ip
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeIP:
+    def test_invalid_ip_is_stripped(self) -> None:
+        """Invalid IP strings should be excluded from the payload."""
+        with patch.object(httpx.Client, "post", return_value=make_mock_response()) as mock_post:
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            soc.track("auth.login.success", ip="not-an-ip")
+            soc.close()
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert "ip" not in payload
+
+    def test_valid_ipv4_is_kept(self) -> None:
+        """Valid IPv4 addresses should be included in the payload."""
+        with patch.object(httpx.Client, "post", return_value=make_mock_response()) as mock_post:
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            soc.track("auth.login.success", ip="10.0.0.1")
+            soc.close()
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["ip"] == "10.0.0.1"
+
+    def test_valid_ipv6_is_kept(self) -> None:
+        """Valid IPv6 addresses should be included in the payload."""
+        with patch.object(httpx.Client, "post", return_value=make_mock_response()) as mock_post:
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            soc.track("auth.login.success", ip="2001:db8::1")
+            soc.close()
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["ip"] == "2001:db8::1"
+
+
+# ---------------------------------------------------------------------------
 # 7. Resolve actor from object
 # ---------------------------------------------------------------------------
 
