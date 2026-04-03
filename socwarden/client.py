@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import base64
 import ipaddress
-import json
 import logging
+import re
 import os
 import platform
 import threading
@@ -22,6 +21,9 @@ logger = logging.getLogger("socwarden")
 
 SDK_NAME = "socwarden-python"
 SDK_VERSION = "1.0.0"
+
+# D3 FIX: Event type validation regex — matches the ingestor's required format.
+_EVENT_TYPE_RE = re.compile(r"^[a-z][a-z0-9]{0,29}(\.[a-z][a-z0-9_]{0,29}){1,3}$")
 
 
 class SOCWarden:
@@ -49,6 +51,18 @@ class SOCWarden:
     ) -> None:
         self._api_key = api_key
         self._endpoint = endpoint.rstrip("/")
+
+        # D2 FIX: Enforce HTTPS to prevent API key transmission in cleartext.
+        if not self._endpoint.startswith("https://"):
+            import os
+            if os.environ.get("SOCWARDEN_ENV", "").lower() == "production" or os.environ.get("ENV", "").lower() == "production":
+                raise ValueError(
+                    "[SOCWarden] Endpoint must use HTTPS in production. "
+                    "API keys must not be transmitted in cleartext."
+                )
+            logger.warning(
+                "[SOCWarden] WARNING: Endpoint is using HTTP. API keys will be transmitted in cleartext."
+            )
         self._timeout = timeout
         self._auto_context = auto_context
 
@@ -115,6 +129,14 @@ class SOCWarden:
             resource: Resource object (reads class name + ``.pk`` / ``.id``) or type string.
             resource_id: Explicit resource ID (used when ``resource`` is a string).
         """
+        # D3 FIX: Validate event type format before sending.
+        if not _EVENT_TYPE_RE.match(event):
+            logger.warning(
+                "SOCWarden: invalid event type format, dropping event: %r. "
+                "Event types must match ^[a-z][a-z0-9]{0,29}(\\.[a-z][a-z0-9_]{0,29}){1,3}$",
+                event,
+            )
+            return
         data = self._resolve_args(
             actor=actor,
             actor_id=actor_id,
@@ -136,6 +158,14 @@ class SOCWarden:
             event: Dot-separated event type.
             data: Raw data dict matching the ingestor schema.
         """
+        # D3 FIX: Validate event type format before sending.
+        if not _EVENT_TYPE_RE.match(event):
+            logger.warning(
+                "SOCWarden: invalid event type format, dropping event: %r. "
+                "Event types must match ^[a-z][a-z0-9]{0,29}(\\.[a-z][a-z0-9_]{0,29}){1,3}$",
+                event,
+            )
+            return
         payload = self._build_payload(event, data or {})
         self._executor.submit(self._send, payload)
 
@@ -158,6 +188,14 @@ class SOCWarden:
         Sends the event using an async HTTP client without blocking the
         event loop.
         """
+        # D3 FIX: Validate event type format before sending.
+        if not _EVENT_TYPE_RE.match(event):
+            logger.warning(
+                "SOCWarden: invalid event type format, dropping event: %r. "
+                "Event types must match ^[a-z][a-z0-9]{0,29}(\\.[a-z][a-z0-9_]{0,29}){1,3}$",
+                event,
+            )
+            return
         data = self._resolve_args(
             actor=actor,
             actor_id=actor_id,
@@ -346,21 +384,9 @@ class SOCWarden:
         if req_dict:
             context["request"] = req_dict
 
-        # Merge browser context from X-SOCWarden-Context header
-        browser_raw = req_ctx.browser_context
-        if browser_raw:
-            try:
-                b64_decoded = base64.b64decode(browser_raw).decode("utf-8")
-                browser_context = json.loads(b64_decoded)
-            except Exception:
-                # Fallback: try raw JSON (backward compat)
-                try:
-                    browser_context = json.loads(browser_raw)
-                except (json.JSONDecodeError, TypeError):
-                    browser_context = None
-                    logger.debug("SOCWarden: failed to decode browser context header")
-            if isinstance(browser_context, dict):
-                context.update(browser_context)
+        # D1 FIX: X-SOCWarden-Context header removed — trusting arbitrary HTTP headers
+        # allows any client to spoof server-side metadata. Browser context from
+        # incoming request headers is no longer merged into server-side context.
 
         return context
 

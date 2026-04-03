@@ -66,7 +66,8 @@ class SOCWardenFlask:
                 flask_request.headers.get("X-Request-ID", "")
                 or flask_request.headers.get("X-Correlation-ID", "")
             )
-            _request_context.browser_context = flask_request.headers.get("X-SOCWarden-Context", "")
+            # D1 FIX: X-SOCWarden-Context header removed — trusting arbitrary HTTP headers
+            # allows any client to spoof server-side metadata.
         except Exception:
             logger.debug("SOCWarden: failed to capture Flask request context")
 
@@ -141,7 +142,8 @@ class SOCWardenDjangoMiddleware:
             request.META.get("HTTP_X_REQUEST_ID", "")
             or request.META.get("HTTP_X_CORRELATION_ID", "")
         )
-        _request_context.browser_context = request.META.get("HTTP_X_SOCWARDEN_CONTEXT", "")
+        # D1 FIX: X-SOCWarden-Context header removed — trusting arbitrary HTTP headers
+        # allows any client to spoof server-side metadata.
 
         response = self.get_response(request)
 
@@ -216,7 +218,8 @@ class SOCWardenASGIMiddleware:
         _request_context.request_id = (
             headers.get("x-request-id", "") or headers.get("x-correlation-id", "")
         )
-        _request_context.browser_context = headers.get("x-socwarden-context", "")
+        # D1 FIX: X-SOCWarden-Context header removed — trusting arbitrary HTTP headers
+        # allows any client to spoof server-side metadata.
 
         try:
             await self.app(scope, receive, send)
