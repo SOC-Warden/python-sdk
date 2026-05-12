@@ -43,7 +43,7 @@ class SOCWarden:
     def __init__(
         self,
         api_key: str,
-        endpoint: str = "https://ingest.socwarden.io",
+        endpoint: str = "https://ingest.socwarden.com",
         *,
         timeout: float = 5.0,
         max_workers: int = 4,
