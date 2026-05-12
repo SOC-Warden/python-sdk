@@ -306,7 +306,14 @@ class TestBackoff:
         """A 429 response should set _backoff_until, causing subsequent calls to be skipped."""
         mock_resp = make_mock_response(429, headers={"Retry-After": "3600"})
 
-        with patch.object(httpx.Client, "post", return_value=mock_resp) as mock_post:
+        # Control the clock so the probe fires reliably regardless of CI uptime.
+        # Layout: [first-send-check, first-send-set-backoff,
+        #          second-send-check(400>probe_interval), second-send-set-backoff,
+        #          third-send-check(within probe interval), fourth-send-check]
+        fake_times = iter([0, 0, 400, 400, 401, 402])
+
+        with patch("socwarden.client.time.monotonic", side_effect=fake_times), \
+             patch.object(httpx.Client, "post", return_value=mock_resp) as mock_post:
             soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
 
             # Call _send directly (synchronous) to avoid thread pool timing issues
