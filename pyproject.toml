@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "socwarden"
-version = "1.0.0"
+version = "1.0.0a1"
 description = "Python SDK for SOCWarden — security event tracking and threat detection."
 readme = "README.md"
 license = "MIT"
