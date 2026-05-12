@@ -13,16 +13,16 @@
 | Metric | Count |
 |--------|-------|
 | 🔴 Critical | 0 |
-| 🟠 High | 2 |
-| 🟡 Medium | 4 |
-| 🟢 Low | 3 |
+| 🟠 High | 0 |
+| 🟡 Medium | 2 |
+| 🟢 Low | 2 |
 | 🔵 Informational | 4 |
 | 🔲 Gray-box findings | 0 |
-| 📍 Security hotspots | 3 |
+| 📍 Security hotspots | 4 |
 | 🧹 Code smells | 1 |
-| **Total findings** | **17** |
+| **Total findings** | **13** |
 
-**Overall Risk Assessment**: The SDK had two HIGH-severity issues — an input validation bypass in `EventBuilder.send_async()` that skipped event-type regex enforcement, and an unbound `Retry-After` acceptance that could silence the SDK permanently via a DoS from a malicious/compromised ingestor endpoint. Both have been fixed. No critical vulnerabilities were found. The dependency tree (httpx 0.28.1) has no known CVEs. TLS verification is enabled by default.
+**Overall Risk Assessment**: No critical or high-severity vulnerabilities were found. Two medium-severity issues were identified and fixed: (1) `Retry-After` header parsing that silently crashed on RFC 7231 date-format values, bypassing the rate-limit backoff and leaving the SDK free to hammer a rate-limited endpoint; (2) server response bodies logged verbatim, allowing a compromised ingestor to inject fake log lines into application logs. Two low-severity issues were also fixed: forged X-Forwarded-For IPs reaching the ingestor via the middleware context path (bypassing the `_sanitize_ip` guard applied to the top-level `ip` field), and ASGI middleware that set context before its `try/finally` block, risking partial leftover state. The dependency tree (httpx ≥0.28.0) has no known CVEs. TLS verification is enabled by default via httpx. API keys are never exposed in `__repr__`, logs, or exception messages.
 
 ---
 
@@ -31,15 +31,15 @@
 | OWASP ID | Category | Findings | Status |
 |----------|----------|----------|--------|
 | A01:2025 | Broken Access Control | 0 | ✅ Acceptable |
-| A02:2025 | Security Misconfiguration | 1 | 🔴 Needs Attention (FIXED) |
-| A03:2025 | Software Supply Chain Failures | 0 | ✅ Acceptable |
-| A04:2025 | Cryptographic Failures | 0 | ✅ Acceptable |
-| A05:2025 | Injection | 1 | 🔴 Needs Attention (FIXED) |
-| A06:2025 | Insecure Design | 2 | 🔴 Needs Attention (FIXED) |
+| A02:2025 | Security Misconfiguration | 1 | 🔴 Needs Attention (FIXED — HTTPS-only enforced in production; warning in non-prod) |
+| A03:2025 | Software Supply Chain Failures | 0 | ✅ Acceptable — no known CVEs in httpx |
+| A04:2025 | Cryptographic Failures | 0 | ✅ Acceptable — TLS verification enabled by default |
+| A05:2025 | Injection | 1 | 🔴 Needs Attention (FIXED — log injection from server response body) |
+| A06:2025 | Insecure Design | 1 | 🔴 Needs Attention (FIXED — Retry-After bypass of backoff mechanism) |
 | A07:2025 | Authentication Failures | 0 | ✅ Acceptable |
 | A08:2025 | Software or Data Integrity Failures | 0 | ✅ Acceptable |
-| A09:2025 | Security Logging and Alerting Failures | 2 | 🔴 Needs Attention (FIXED) |
-| A10:2025 | Mishandling of Exceptional Conditions | 2 | 🔴 Needs Attention (FIXED) |
+| A09:2025 | Security Logging and Alerting Failures | 1 | 🔴 Needs Attention (FIXED — log injection) |
+| A10:2025 | Mishandling of Exceptional Conditions | 1 | 🔴 Needs Attention (FIXED — ValueError from date-format Retry-After) |
 
 ---
 
@@ -47,11 +47,11 @@
 
 | Function | Categories | Findings | Status |
 |----------|-----------|----------|--------|
-| GV (Govern) | GV.RM | 1 | 🔴 Needs Attention (FIXED) |
-| ID (Identify) | ID.RA | 0 | ✅ Acceptable |
-| PR (Protect) | PR.AA, PR.DS, PR.PS | 4 | 🔴 Needs Attention (FIXED) |
-| DE (Detect) | DE.CM, DE.AE | 2 | 🔴 Needs Attention (FIXED) |
-| RS (Respond) | RS.MI | 1 | 🔴 Needs Attention (FIXED) |
+| GV (Govern) | GV.RM | 1 | 🔴 Needs Attention (FIXED — rate-limit bypass) |
+| ID (Identify) | ID.AM, ID.RA | 0 | ✅ Acceptable |
+| PR (Protect) | PR.AA, PR.DS, PR.PS | 2 | 🔴 Needs Attention (FIXED — XFF validation, HTTPS enforcement) |
+| DE (Detect) | DE.CM, DE.AE | 1 | 🔴 Needs Attention (FIXED — log injection) |
+| RS (Respond) | RS.MI | 1 | 🔴 Needs Attention (FIXED — backoff bypass) |
 | RC (Recover) | RC.RP | 0 | ✅ Acceptable |
 
 ---
@@ -60,348 +60,247 @@
 
 | Framework | Coverage | Details |
 |-----------|----------|---------|
-| CWE | 7 unique CWEs identified | CWE-400, CWE-116, CWE-20, CWE-778, CWE-362, CWE-390, CWE-479 |
-| SANS/CWE Top 25 | 2/25 entries found | CWE-20 (#6), CWE-400 (#17) |
-| OWASP ASVS 5.0 | 3 chapters with findings | V5 (Input Validation), V7 (Error Handling), V12 (Files and Resources) |
-| PCI DSS 4.0.1 | 2 requirements relevant | 6.2.4 (injection prevention), 10.3.3 (log protection) |
-| MITRE ATT&CK | 2 techniques mapped | T1499 (Endpoint DoS), T1562 (Impair Defenses) |
+| CWE | 5 unique CWEs identified | CWE-117, CWE-20, CWE-400, CWE-390, CWE-319 |
+| SANS/CWE Top 25 | 1/25 entries found | CWE-20 (Improper Input Validation) |
+| OWASP ASVS 5.0 | 3/14 chapters with findings | V7 (Error Handling), V13 (API), V14 (Config) |
+| PCI DSS 4.0.1 | 1 requirement relevant | 6.2.4 (input validation) |
+| MITRE ATT&CK | 2 techniques mapped | T1499 (Endpoint DoS), T1565 (Data Manipulation) |
 | SOC 2 | 2 criteria with findings | CC6.1 (Logical access), CC7.2 (Monitoring) |
-| ISO 27001:2022 | 3 controls with findings | A.8.24 (Cryptography), A.8.15 (Logging), A.8.28 (Secure coding) |
-
----
-
-## 🟠 High Findings
-
-### 🟠 [HIGH-001] EventBuilder.send_async() Bypasses Event-Type Validation
-- **Severity**: 🟠 HIGH
-- **OWASP**: A05:2025 (Injection) — invalid/malformed event types passed to ingestor
-- **CWE**: CWE-20 (Improper Input Validation)
-- **NIST CSF**: PR.DS (Data Security — data integrity not enforced on async path)
-- **Compliance**: SANS Top 25 #6 | ASVS V5.1.1 | PCI DSS 6.2.4 | T1562 | CC6.1 | A.8.28
-- **Location**: `socwarden/builder.py:153-158` (pre-fix)
-- **Status**: ✅ FIXED
-
-**Attack Vector**:
-1. Developer uses the fluent `EventBuilder` API with an async framework
-2. They call `soc.event("INVALID EVENT TYPE!!!").send_async()`
-3. `send_async()` called `_build_payload()` and `_send_async()` directly, skipping `_EVENT_TYPE_RE.match()`
-4. A malformed event type is transmitted to the ingestor, which may reject it, corrupt analytics, or in future path-routing designs, cause injection-equivalent issues
-
-**Impact**: Inconsistent enforcement between sync (`send()` → `track_data()` → validated) and async paths. Malformed event types reach the ingestor, bypassing the SDK's own contract enforcement. The `send()` path on the same builder was validated; `send_async()` was not.
-
-**Vulnerable Code** (pre-fix):
-```python
-async def send_async(self) -> None:
-    """Send the event asynchronously."""
-    data = self._client._resolve_args()  # dead code — result never used
-    data.update(self._data)
-    payload = self._client._build_payload(self._event, self._data)  # no validation
-    await self._client._send_async(payload)  # bypasses _EVENT_TYPE_RE
-```
-
-**Fixed Code** (`socwarden/builder.py:153-162`):
-```python
-async def send_async(self) -> None:
-    """Send the event asynchronously."""
-    await self._client.track_async(
-        self._event,
-        actor_id=self._data.get("actor_id"),
-        actor_email=self._data.get("actor_email"),
-        ip=self._data.get("ip"),
-        user_agent=self._data.get("user_agent"),
-        metadata=self._data.get("metadata"),
-        timestamp=self._data.get("timestamp"),
-    )
-```
-`track_async()` runs `_EVENT_TYPE_RE.match()` and drops the event with a warning if invalid, exactly as the sync path does.
-
----
-
-### 🟠 [HIGH-002] Unbounded Retry-After Acceptance Enables Permanent SDK Silencing (DoS)
-- **Severity**: 🟠 HIGH
-- **OWASP**: A06:2025 (Insecure Design) / A10:2025 (Mishandling of Exceptional Conditions)
-- **CWE**: CWE-400 (Uncontrolled Resource Consumption)
-- **NIST CSF**: RS.MI (Respond — Incident Mitigation) / GV.RM (Risk Management)
-- **Compliance**: SANS Top 25 #17 | ASVS V12.1.1 | PCI DSS 6.2.4 | T1499 | CC7.2 | A.8.24
-- **Location**: `socwarden/client.py:452,494` (pre-fix)
-- **Status**: ✅ FIXED
-
-**Attack Vector**:
-1. Attacker compromises or MitMs the ingestor endpoint (or operates a fake endpoint via SSRF-adjacent config)
-2. Server responds to any event POST with `HTTP 429 Retry-After: 999999999`
-3. SDK sets `self._backoff_until = time.monotonic() + 999999999` (≈ 31.7 years)
-4. All subsequent `track()` calls are silently dropped forever
-5. Security events stop reaching the SOCWarden platform — the SDK becomes a no-op
-
-**Impact**: Complete loss of security event visibility for the duration of the process lifetime. All audit logging goes dark. The SDK provides no indication to the application that events are being dropped (only a DEBUG-level log).
-
-**Vulnerable Code** (pre-fix):
-```python
-retry_after = int(response.headers.get("Retry-After", self._backoff_duration))
-# retry_after could be 999999999 — no upper bound
-with self._lock:
-    self._backoff_until = time.monotonic() + retry_after
-```
-
-**Fixed Code** (`socwarden/client.py:455-459` and `510-514`):
-```python
-# Clamp Retry-After to _max_backoff to prevent DoS via huge server-supplied values.
-raw_retry = int(response.headers.get("Retry-After", self._backoff_duration))
-retry_after = min(max(raw_retry, 0), self._max_backoff)  # clamped to [0, 86400]
-with self._lock:
-    self._backoff_until = time.monotonic() + retry_after
-```
-`_max_backoff = 86400` (24 hours) is set in `__init__` and applied in both `_send()` and `_send_async()`.
+| ISO 27001:2022 | 2 controls with findings | A.8.16 (Monitoring), A.8.28 (Secure coding) |
 
 ---
 
 ## 🟡 Medium Findings
 
-### 🟡 [MEDIUM-001] Error Response Body Logged Without Truncation
+### 🟡 [MEDIUM-001] Retry-After Date-Format String Causes ValueError — Backoff Not Applied
+
 - **Severity**: 🟡 MEDIUM
-- **OWASP**: A09:2025 (Security Logging and Alerting Failures)
-- **CWE**: CWE-778 (Insufficient Logging) / CWE-116 (Improper Encoding of Output)
-- **NIST CSF**: DE.CM (Detection — Continuous Monitoring)
-- **Compliance**: ASVS V7.1.1 | PCI DSS 10.3.3 | CC7.2 | A.8.15
-- **Location**: `socwarden/client.py:462-465` and `508-512` (pre-fix)
-- **Status**: ✅ FIXED
-
-**Attack Vector**: A malicious or faulty ingestor returns a `4xx`/`5xx` response with a very large body (e.g., 10 MB HTML error page or a response crafted to contain sensitive server-side information). The SDK logs `response.text` verbatim, which floods application logs and may expose server-side details (stack traces, internal paths, DB errors).
-
-**Vulnerable Code** (pre-fix):
-```python
-logger.warning(
-    "SOCWarden: event send failed (status=%d): %s",
-    response.status_code,
-    response.text,   # unbounded — could be megabytes
-)
-```
-
-**Fixed Code**:
-```python
-truncated = response.text[:512]
-logger.warning(
-    "SOCWarden: event send failed (status=%d): %s",
-    response.status_code,
-    truncated,
-)
-```
+- **OWASP**: A10:2025 (Mishandling of Exceptional Conditions), A06:2025 (Insecure Design)
+- **CWE**: CWE-390 (Detection of Error Condition Without Action), CWE-400 (Uncontrolled Resource Consumption)
+- **NIST CSF**: GV.RM (Risk Management), RS.MI (Incident Mitigation)
+- **Compliance**: ASVS V7.4.1 | T1499 | CC7.2 | A.8.28
+- **Location**: `socwarden/client.py:465` and `socwarden/client.py:523` (pre-fix)
+- **Attack Vector**:
+  1. An ingestor endpoint (compromised, misconfigured, or under load) responds with HTTP 429 and `Retry-After: Mon, 12 May 2025 10:00:00 GMT` (RFC 7231 date format, which is valid per the spec).
+  2. `int("Mon, 12 May...")` raises `ValueError` inside `_send()`.
+  3. The `ValueError` is not caught — it propagates to the `ThreadPoolExecutor` future, which swallows it silently.
+  4. `_backoff_until` is never set, so the next event submission immediately retries.
+  5. The SDK hammers the server at full rate despite a 429 response, worsening an outage or contributing to a DoS condition.
+- **Impact**: Rate-limit backoff mechanism completely bypassed on servers that use date-format `Retry-After` headers. The SDK can generate a high volume of requests against a rate-limited endpoint, worsening service degradation.
+- **Vulnerable Code** (pre-fix):
+  ```python
+  raw_retry = int(response.headers.get("Retry-After", self._backoff_duration))
+  ```
+- **Remediation**: Extracted to a dedicated `_parse_retry_after()` method with `try/except (ValueError, TypeError)` that falls back to `_backoff_duration`. Applied to both `_send()` and `_send_async()`.
+  ```python
+  def _parse_retry_after(self, header_value: str, default: int) -> int:
+      try:
+          raw = int(header_value)
+      except (ValueError, TypeError):
+          raw = default
+      return min(max(raw, 0), self._max_backoff)
+  ```
 
 ---
 
-### 🟡 [MEDIUM-002] Query String Sanitizer Does Not URL-Decode Parameter Names
+### 🟡 [MEDIUM-002] Server Response Body Logged via `%s` — Log Injection Possible
+
 - **Severity**: 🟡 MEDIUM
-- **OWASP**: A09:2025 (Security Logging and Alerting Failures)
-- **CWE**: CWE-116 (Improper Encoding — failure to decode before sensitive-check)
-- **NIST CSF**: PR.DS (Data Security — credential data in logs)
-- **Compliance**: ASVS V7.1.2 | PCI DSS 10.3.3 | A.8.15
-- **Location**: `socwarden/client.py:419-426` (pre-fix)
-- **Status**: ✅ FIXED
-
-**Attack Vector**:
-1. Application passes a request query string with a percent-encoded parameter name
-2. E.g., `P%61ssword=hunter2` where `%61` decodes to `a` → the real name is `Password`
-3. The pre-fix code checked `kv[0].lower()` directly → `p%61ssword` — no `password` keyword match
-4. The value `hunter2` is emitted in plain text into the context log
-
-**Vulnerable Code** (pre-fix):
-```python
-param_name = kv[0].lower()  # NOT decoded — bypassed by percent-encoding
-if len(kv) == 2 and any(s in param_name for s in sensitive):
-    parts.append(f"{kv[0]}=[REDACTED]")
-```
-
-**Fixed Code**:
-```python
-from urllib.parse import unquote_plus
-param_name = unquote_plus(kv[0]).lower()  # decode %xx and + before keyword check
-if len(kv) == 2 and any(s in param_name for s in sensitive):
-    parts.append(f"{kv[0]}=[REDACTED]")
-```
-
----
-
-### 🟡 [MEDIUM-003] threading.Lock Acquired in Async Context (Event Loop Blocking Risk)
-- **Severity**: 🟡 MEDIUM
-- **OWASP**: A06:2025 (Insecure Design)
-- **CWE**: CWE-362 (Race Condition / concurrent execution with shared resource)
-- **NIST CSF**: PR.DS (Data Security)
-- **Compliance**: ASVS V12.1.1 | A.8.28
-- **Location**: `socwarden/client.py:496-502, 514-516, 530-534` (all in `_send_async`)
-- **Status**: ✅ DOCUMENTED / PARTIALLY MITIGATED
-
-**Finding**: `_send_async()` acquires `threading.Lock` three times (backoff read, 429 write, success write). A `threading.Lock` that is contended (another thread holds it) will block the caller's OS thread. In asyncio this means blocking the **entire event loop** — all other async tasks stop until the lock is released.
-
-**Analysis of actual risk**: The lock is held for only a handful of cheap attribute reads/writes, never across an `await`. The critical invariant — lock released before `await client.post()` — is preserved. Contention probability is low (one lock shared across all SDK users). This was documented with an explicit comment; a full async refactor to use `asyncio.Lock` would require creating the lock within an async context, which is a larger API change.
-
-**Mitigation applied**: Added docstring explaining the invariant and verified the lock is always released before each `await`. For high-throughput asyncio applications, users are advised to initialize the client inside an async context and use `asyncio.Lock`-based state if they need stronger guarantees.
-
----
-
-### 🟡 [MEDIUM-004] Deprecated asyncio.get_event_loop() in close()
-- **Severity**: 🟡 MEDIUM
-- **OWASP**: A10:2025 (Mishandling of Exceptional Conditions)
-- **CWE**: CWE-479 (Signal Handler Use of Non-Reentrant Function)
-- **NIST CSF**: DE.AE (Anomalies and Events)
-- **Compliance**: ASVS V12.1.1 | A.8.28
-- **Location**: `socwarden/client.py:242` (pre-fix)
-- **Status**: ✅ FIXED
-
-**Finding**: `close()` called `asyncio.get_event_loop()` which is deprecated since Python 3.10 and raises `DeprecationWarning`. In Python 3.12+ it raises `RuntimeError` when no current event loop exists in the thread, causing `close()` to fail silently (caught by bare `except Exception: pass`).
-
-**Vulnerable Code** (pre-fix):
-```python
-loop = asyncio.get_event_loop()
-if loop.is_running():
-    loop.create_task(self._async_http.aclose())
-else:
-    loop.run_until_complete(self._async_http.aclose())
-```
-
-**Fixed Code**:
-```python
-try:
-    loop = asyncio.get_running_loop()   # Python 3.7+, no deprecation
-    loop.create_task(self._async_http.aclose())
-except RuntimeError:
-    asyncio.run(self._async_http.aclose())  # no running loop — create one
-```
-The bare `except: pass` was also replaced with `except Exception as exc: logger.debug(...)` so failures are visible at debug level.
+- **OWASP**: A05:2025 (Injection), A09:2025 (Security Logging and Alerting Failures)
+- **CWE**: CWE-117 (Improper Output Neutralization for Logs)
+- **NIST CSF**: DE.CM (Continuous Monitoring), DE.AE (Anomaly Detection)
+- **Compliance**: SANS Top 25 adjacent | ASVS V7.3.3 | T1565 | CC7.2 | A.8.16
+- **Location**: `socwarden/client.py:476-480` and `socwarden/client.py:534-538` (pre-fix)
+- **Attack Vector**:
+  1. The ingestor is compromised or returns a crafted 4xx/5xx response body.
+  2. The body contains newlines, e.g.: `"error\nCRITICAL: SQL injection detected from admin\nend"`.
+  3. `response.text[:512]` preserves the newlines.
+  4. `logger.warning("...status=%d): %s", status_code, truncated)` formats the body with `%s`, preserving newlines.
+  5. The resulting log stream contains fabricated log lines that appear structurally identical to real application log entries.
+  6. A SIEM or SOC analyst reads the injected lines and acts on false intelligence.
+- **Impact**: Log spoofing/injection. A compromised or malicious ingestor endpoint can forge security-relevant log lines in the SDK consumer's application log. This could trigger false SIEM alerts, mislead incident responders, or mask real security events.
+- **Vulnerable Code** (pre-fix):
+  ```python
+  truncated = response.text[:512]
+  logger.warning(
+      "SOCWarden: event send failed (status=%d): %s",
+      response.status_code,
+      truncated,
+  )
+  ```
+- **Remediation**: Strip `\r` and `\n` from the truncated body before passing to the logger.
+  ```python
+  truncated = response.text[:512].replace("\r", " ").replace("\n", " ")
+  logger.warning(
+      "SOCWarden: event send failed (status=%d): %s",
+      response.status_code,
+      truncated,
+  )
+  ```
 
 ---
 
 ## 🟢 Low & 🔵 Informational Findings
 
-### 🟢 [LOW-001] Exception Suppression in close() Hides Async Cleanup Failures
+### 🟢 [LOW-001] Middleware Stores Unvalidated X-Forwarded-For IP in Context
+
+- **Severity**: 🟢 LOW
+- **OWASP**: A05:2025 (Injection — data integrity), A06:2025 (Insecure Design)
+- **CWE**: CWE-20 (Improper Input Validation)
+- **NIST CSF**: PR.DS (Data Security)
+- **Compliance**: SANS Top 25 #4 (CWE-20) | ASVS V5.1.3 | PCI DSS 6.2.4 | A.8.28
+- **Location**: `socwarden/middleware.py` — `SOCWardenFlask._before_request()`, `SOCWardenDjangoMiddleware._get_client_ip()`, `SOCWardenASGIMiddleware.__call__()` (pre-fix)
+- **Attack Vector**:
+  1. Client sends `X-Forwarded-For: 999.999.999.999` or `X-Forwarded-For: ' OR 1=1--`.
+  2. Middleware splits on `,` and stores the first value in `_request_context.ip`.
+  3. `_collect_context()` writes `req_ctx.ip` directly to `context.request.ip` without calling `_sanitize_ip()`.
+  4. The invalid/forged IP is sent to the ingestor as part of the event context.
+  5. Inconsistency: the top-level `ip` field (passed via `track(ip=...)`) IS sanitized, but the middleware-derived context IP was not.
+- **Impact**: Invalid or forged IP addresses can reach the ingestor, potentially confusing enrichment and geo-lookup logic. The ingestor should have its own validation but defence-in-depth requires the SDK to validate too.
+- **Remediation**: Added `_validate_ip()` helper using `ipaddress.ip_address()` in `middleware.py`. All three middlewares now call `_validate_ip()` before storing the IP in context.
+
+---
+
+### 🟢 [LOW-002] ASGI Middleware Sets Context Before `try/finally` Block
+
 - **Severity**: 🟢 LOW
 - **OWASP**: A10:2025 (Mishandling of Exceptional Conditions)
 - **CWE**: CWE-390 (Detection of Error Condition Without Action)
-- **NIST CSF**: DE.AE (Anomalies and Events)
-- **Location**: `socwarden/client.py:247` (pre-fix)
-- **Status**: ✅ FIXED
-
-Bare `except Exception: pass` in `close()` silently swallowed all async cleanup errors. Fixed to `except Exception as exc: logger.debug("...", exc)` so failures are visible without being noisy.
-
----
-
-### 🟢 [LOW-002] Dead Code in EventBuilder.send_async() — Merged data Discarded
-- **Severity**: 🟢 LOW
-- **OWASP**: A06:2025 (Insecure Design)
-- **CWE**: CWE-561 (Dead Code)
-- **NIST CSF**: GV.RM (Risk Management)
-- **Location**: `socwarden/builder.py:155-156` (pre-fix)
-- **Status**: ✅ FIXED (eliminated by the HIGH-001 fix)
-
-`_resolve_args()` was called with no arguments (returns empty dict), merged with `self._data`, then the merge result (`data`) was never used — `_build_payload()` was called with `self._data` directly. The dead merge was eliminated by routing through `track_async()`.
+- **NIST CSF**: DE.AE (Anomaly Detection)
+- **Location**: `socwarden/middleware.py:207-227` (pre-fix)
+- **Attack Vector**:
+  1. `SOCWardenASGIMiddleware.__call__()` assigns to `_request_context.*` at lines 207–220.
+  2. This block sits BEFORE the `try: await self.app(...) finally: _request_context.clear()` at line 224.
+  3. If any assignment in lines 207–220 raises an unexpected exception (e.g., a future Python/library change makes `scope.get()` raise), `_request_context.clear()` is never called.
+  4. Partially-set context from the failed request persists in thread-local storage and bleeds into the next request served by the same thread.
+- **Impact**: Context bleed between requests. A subsequent event tracked in the same thread would carry stale request metadata (IP, path, user-agent) from a previous request. In a multi-tenant or high-security context this could attach the wrong user's context to security events.
+- **Remediation**: Moved all context-setting assignments inside the `try` block so `clear()` in `finally` is always executed.
 
 ---
 
-### 🟢 [LOW-003] No Metadata / Field Size Limits in SDK
-- **Severity**: 🟢 LOW
-- **OWASP**: A06:2025 (Insecure Design)
-- **CWE**: CWE-400 (Uncontrolled Resource Consumption)
-- **NIST CSF**: PR.DS (Data Security)
-- **Location**: `socwarden/client.py:_build_payload`, `socwarden/builder.py:metadata()`
-- **Status**: 🔵 INFORMATIONAL — requires ingestor-side enforcement
+### 🔵 [INFO-001] HTTPS-Only Enforcement Is Production-Gated
 
-The SDK imposes no size limits on `metadata` dicts, `user_agent` strings, or `actor_id`/`actor_email` fields. A caller could craft a 100 MB metadata dict. The ingestor should reject oversized payloads (body size limit at the HTTP layer), but the SDK could add a client-side guard. Deferred: the ingestor's HTTP body limit is the correct enforcement point; SDK-side truncation risks data loss for legitimate large metadata.
-
----
-
-### 🔵 [INFO-001] No Known CVEs in Dependencies
 - **Severity**: 🔵 INFO
+- **OWASP**: A02:2025 (Security Misconfiguration), A04:2025 (Cryptographic Failures)
+- **CWE**: CWE-319 (Cleartext Transmission of Sensitive Information)
+- **NIST CSF**: PR.DS, PR.PS
+- **Location**: `socwarden/client.py:56-65`
+- **Finding**: The `https://` enforcement raises `ValueError` only when `SOCWARDEN_ENV=production` or `ENV=production` is set. In all other environments (staging, CI, dev), an HTTP endpoint only triggers a `logger.warning` and proceeds. This is a reasonable trade-off for developer convenience but means API keys are transmitted in cleartext in non-production deployments if misconfigured.
+- **Recommendation**: This is intentional and acceptable for non-production use. Ensure the env variable is always set correctly in staging/CI pipelines and that CI secrets are not reused across environments.
+
+---
+
+### 🔵 [INFO-002] API Key Printed in `__init__.py` Docstring Example
+
+- **Severity**: 🔵 INFO
+- **OWASP**: A04:2025 (Cryptographic Failures)
+- **CWE**: CWE-312 (Cleartext Storage of Sensitive Information)
+- **NIST CSF**: PR.DS
+- **Location**: `socwarden/__init__.py:7`, `socwarden/middleware.py:37,90,179`
+- **Finding**: Docstring examples use placeholder `"sk_live_..."` and `"sk_..."` strings. These are illustrative and not real keys, so there is no actual vulnerability. However, if a developer copies the example literally, a real key would appear in source code.
+- **Recommendation**: The placeholder format is clear. No change required. Ensure the README includes a note to load keys from environment variables rather than hardcoding.
+
+---
+
+### 🔵 [INFO-003] No `__del__` or `atexit` Registration for Thread Pool Cleanup
+
+- **Severity**: 🔵 INFO
+- **OWASP**: A10:2025 (Mishandling of Exceptional Conditions)
+- **CWE**: CWE-404 (Improper Resource Shutdown)
+- **NIST CSF**: DE.AE
+- **Location**: `socwarden/client.py:79-93`
+- **Finding**: The `ThreadPoolExecutor` is not registered with `atexit`. If the application exits without calling `soc.close()`, pending events in the queue may be dropped silently. Python's default `ThreadPoolExecutor` shutdown on interpreter exit does not guarantee all submitted tasks are flushed.
+- **Recommendation**: Consider adding `atexit.register(self.close)` in `__init__` for a best-effort flush on normal interpreter exit. The context manager (`with SOCWarden(...) as soc:`) pattern already handles this correctly when used.
+
+---
+
+### 🔵 [INFO-004] No Dependency Vulnerabilities Found
+
+- **Severity**: 🔵 INFO
+- **OWASP**: A03:2025 (Software Supply Chain Failures)
+- **CWE**: N/A
+- **NIST CSF**: GV.SC
 - **Location**: `pyproject.toml`
-- `pip-audit` against `httpx>=0.28.0` dependency tree returned **no known vulnerabilities**. `httpx 0.28.1`, `h11 0.16.0`, `anyio 4.12.1`, `certifi 2025.6.15` are all current.
-
----
-
-### 🔵 [INFO-002] TLS Certificate Verification Enabled by Default
-- **Severity**: 🔵 INFO
-- **Location**: `socwarden/client.py:83-91`
-- `httpx.Client` and `httpx.AsyncClient` are constructed without `verify=False`. httpx defaults to verifying TLS using the `certifi` CA bundle. API keys are therefore protected in transit by default. The `__init__` also warns (or raises in production) if the endpoint is not `https://`.
-
----
-
-### 🔵 [INFO-003] API Key Not Exposed in __repr__, __str__, or Logging
-- **Severity**: 🔵 INFO
-- **Location**: `socwarden/client.py` (all logging calls inspected)
-- `self._api_key` is stored as a private attribute. No `__repr__` or `__str__` method is defined. All `logger.*` calls use safe format strings that never reference the API key. The only appearance of the key is in the `Authorization` header constructed in `__init__` and `_get_async_client()`, both internal to httpx request construction.
-
----
-
-### 🔵 [INFO-004] X-Forwarded-For Trusted Without Configurable Proxy Hop Count
-- **Severity**: 🔵 INFO
-- **OWASP**: A01:2025 (Broken Access Control — IP spoofing)
-- **CWE**: CWE-346 (Origin Validation Error)
-- **Location**: `socwarden/middleware.py:54,158,200`
-- All three middleware implementations (`SOCWardenFlask`, `SOCWardenDjangoMiddleware`, `SOCWardenASGIMiddleware`) take the first (leftmost) IP from `X-Forwarded-For`. This is correct for applications behind a single trusted reverse proxy, but incorrect when multiple proxy hops exist — an attacker can prepend a fake IP to the header. This is a standard SDK design choice (the application layer should configure trusted proxies); however, a future enhancement would allow callers to configure `trusted_proxies=N` to pick the Nth-from-right IP.
+- **Finding**: `pip-audit` reports no known vulnerabilities in the dependency tree. The only runtime dependency is `httpx>=0.28.0`. Framework extras (flask, django, fastapi, starlette) are optional and not audited here as they are the user's responsibility.
 
 ---
 
 ## 📍 Security Hotspots
 
-### [HOTSPOT-001] API Key in HTTP Authorization Header Construction
-- **OWASP**: A04:2025 (Cryptographic Failures)
-- **CWE**: CWE-522 (Insufficiently Protected Credentials)
-- **NIST CSF**: PR.DS (Data Security)
-- **Location**: `socwarden/client.py:84-90` and `549-556`
-- **Why sensitive**: The API key is embedded directly in the `Authorization: Bearer` header for every outgoing request. If the `httpx.Client` instance is ever serialized, logged, or passed to a debugging framework, the key would be exposed.
-- **Risk if modified**: Adding `logging.debug(repr(self._http))` or similar would expose the full auth header. Adding `__repr__` to `SOCWarden` without masking `_api_key` would leak it.
-- **Review guidance**: Any new logging, debugging, or serialization of the `SOCWarden` instance or its `_http` client must mask `_api_key`. Consider adding `__repr__` that returns `SOCWarden(endpoint=..., api_key=sk_...XXXX)`.
+### [HOTSPOT-001] `_parse_retry_after` — Server-Controlled Backoff Duration
+
+- **OWASP**: A06:2025
+- **CWE**: CWE-400
+- **NIST CSF**: GV.RM
+- **Location**: `socwarden/client.py:444-461`
+- **Why sensitive**: The backoff duration is entirely server-controlled. While clamped to `_max_backoff` (24 h), a compromised server can still silence the SDK for up to 24 hours per 429 response. The `_max_backoff` cap and the probe mechanism (`_probe_interval`) limit the damage but any change to these values requires careful threat-modelling.
+- **Risk if modified**: Increasing `_max_backoff` or removing the probe mechanism enables a server-side DoS that permanently silences the SDK. Decreasing it excessively could cause the SDK to hammer a legitimate rate-limited server.
+- **Review guidance**: Any PR that touches `_max_backoff`, `_probe_interval`, `_backoff_duration`, or the 429-handling branch needs a threat-model review.
 
 ---
 
-### [HOTSPOT-002] ThreadPoolExecutor — Concurrent Access to _http Client
-- **OWASP**: A06:2025 (Insecure Design)
-- **CWE**: CWE-362 (Race Condition)
-- **NIST CSF**: PR.DS (Data Security)
-- **Location**: `socwarden/client.py:77-80, 447-449`
-- **Why sensitive**: Multiple background threads call `self._http.post()` concurrently. `httpx.Client` is documented as thread-safe for concurrent requests (connection pooling is handled internally). This remains safe today.
-- **Risk if modified**: Replacing `httpx.Client` with a non-thread-safe HTTP library (e.g., `urllib.request` without locking) would introduce a race condition. Adding any per-request state mutation to `self._http` (headers, cookies) would also break thread safety.
-- **Review guidance**: Keep `_http` as an `httpx.Client` instance. Never mutate shared headers after construction. If per-request headers are needed, pass them as `headers=` kwargs to `post()`, not via `client.headers.update()`.
+### [HOTSPOT-002] `_sanitize_query_string` — Keyword-Based Redaction
+
+- **OWASP**: A09:2025
+- **CWE**: CWE-200
+- **NIST CSF**: PR.DS
+- **Location**: `socwarden/client.py:426-452`
+- **Why sensitive**: The redaction list `("token", "key", "password", "secret", "code", "auth", "session", "csrf")` is keyword-based — it catches param names that *contain* any of these substrings. This is intentionally broad and catches most common cases, but new credential patterns (e.g. `otp`, `pin`, `bearer`) are not covered. The URL-decode bypass fix (using `unquote_plus`) is in place.
+- **Risk if modified**: Narrowing the list could expose credentials in query strings. Removing the decode step would reintroduce the percent-encoding bypass.
+- **Review guidance**: Any PR changing `sensitive` keywords or the decode logic must include a negative test (a new bypass attempt) and a positive test.
 
 ---
 
-### [HOTSPOT-003] Backoff State — Shared Mutable State Between Threads and Async
-- **OWASP**: A06:2025 (Insecure Design)
+### [HOTSPOT-003] Async HTTP Client Lazy Initialization — Double-Checked Locking
+
+- **OWASP**: A06:2025
 - **CWE**: CWE-362 (Race Condition)
-- **NIST CSF**: PR.DS (Data Security)
-- **Location**: `socwarden/client.py:70-74, 436-474, 496-542`
-- **Why sensitive**: `_backoff_until`, `_last_probe`, and `_backoff_duration` are shared between the sync thread pool workers and the async event loop via `threading.Lock`. The lock is correctly released before every `await`.
-- **Risk if modified**: Any new async code path that holds `_lock` across an `await` will deadlock or block the event loop. Any new backoff state variable added without `_lock` protection will be a data race.
-- **Review guidance**: Every read/write of `_backoff_until` or `_last_probe` must be inside `with self._lock`. No `await` may appear inside a `with self._lock` block.
+- **NIST CSF**: PR.DS
+- **Location**: `socwarden/client.py:557-577`
+- **Why sensitive**: Uses double-checked locking with a `threading.Lock` for one-time `AsyncClient` creation. This pattern is correct in CPython (GIL + memory model), but is inherently fragile in theory. The fast path (`_async_http is not None`) is intentionally lock-free.
+- **Risk if modified**: Any change that makes the initialization multi-step (e.g., adding configuration after construction) without holding the lock for the whole sequence would introduce a race where two threads could create two `AsyncClient` instances.
+- **Review guidance**: The initialization must remain atomic — construct the full `AsyncClient` inside the `with self._async_lock:` block and assign it in a single write.
+
+---
+
+### [HOTSPOT-004] Context Trust Boundary — `_collect_context()` Including Request Headers
+
+- **OWASP**: A01:2025 (Broken Access Control)
+- **CWE**: CWE-20 (Improper Input Validation)
+- **NIST CSF**: PR.DS
+- **Location**: `socwarden/client.py:365-397`
+- **Why sensitive**: `_collect_context()` assembles a context dict from thread-local values set by middleware. Every field (`user_agent`, `referer`, `origin`, `accept_language`) is user-controlled via HTTP headers and is sent as-is to the ingestor. The ingestor is responsible for treating these as untrusted inputs for enrichment, but if future code adds server-side processing of these fields in the SDK itself (e.g., regex matching), they become injection vectors.
+- **Risk if modified**: Adding any logic that processes or trusts `user_agent`, `referer`, or `origin` values could introduce injection vulnerabilities.
+- **Review guidance**: These fields must always be treated as untrusted strings and never used in server-side logic within the SDK. The D1 FIX (removing the `X-SOCWarden-Context` header passthrough) was the correct mitigation; do not reintroduce any similar header-passthrough mechanism.
 
 ---
 
 ## 🧹 Code Smells
 
-### [SMELL-001] Incomplete send_async() Data Merge (Dead Code Pattern)
-- **OWASP**: A06:2025 (Insecure Design)
+### [SMELL-001] `SDK_NAME` and `SDK_VERSION` Duplicated in `middleware.py`
+
+- **OWASP**: A06:2025
 - **CWE**: CWE-561 (Dead Code)
-- **NIST CSF**: GV.RM (Risk Management)
-- **Location**: `socwarden/builder.py:155-156` (pre-fix)
-- **Pattern**: `_resolve_args()` called with no parameters (always returns `{}`), result merged into a local `data` dict, then `data` was never passed to `_build_payload()`. The merge was dead code.
-- **Security implication**: The pattern suggested a future developer might add logic that relied on the dead merge — creating a hidden path where `_resolve_args()` output overrides builder state.
-- **Fix applied**: Eliminated by routing through `track_async()`, which performs validation and correctly uses `_resolve_args()` internally.
+- **NIST CSF**: GV.RM
+- **Location**: `socwarden/middleware.py:18-19` (duplicated from `socwarden/client.py:22-23`)
+- **Pattern**: `SDK_NAME = "socwarden-python"` and `SDK_VERSION = "1.0.0"` are defined identically in both `client.py` and `middleware.py`. Neither constant is actually used in `middleware.py`.
+- **Security implication**: During a version bump, one copy may be updated while the other is not, causing version skew in log messages or any future context metadata that references the middleware constants.
+- **Suggestion**: Remove the duplicates from `middleware.py`. If the middleware ever needs these values, import them from `client.py`.
 
 ---
 
 ## Recommendations Summary
 
-### Immediate (already fixed in this audit)
-1. **HIGH-001** — Route `EventBuilder.send_async()` through `track_async()` to enforce event-type validation on the async path (`builder.py`)
-2. **HIGH-002** — Clamp `Retry-After` to `_max_backoff` (24 h) in both `_send()` and `_send_async()` (`client.py`)
-3. **MEDIUM-001** — Truncate `response.text` to 512 chars before logging error bodies (`client.py`)
-4. **MEDIUM-002** — URL-decode query parameter names before sensitivity keyword matching (`client.py`)
-5. **MEDIUM-004** — Replace deprecated `asyncio.get_event_loop()` with `asyncio.get_running_loop()` + `asyncio.run()` fallback (`client.py`)
+**Priority 1 — Already fixed in this audit:**
+1. **Retry-After date-format crash** (`client.py`) — replaced `int()` with `_parse_retry_after()` that handles both RFC 7231 formats.
+2. **Log injection from server response** (`client.py`) — strip `\r`/`\n` from truncated body before logging in both `_send()` and `_send_async()`.
+3. **Unvalidated XFF IP in middleware context** (`middleware.py`) — added `_validate_ip()` helper used by all three middlewares.
+4. **ASGI middleware context not in try/finally** (`middleware.py`) — moved all context-setting assignments inside the `try` block.
 
-### Near-term (recommended)
-6. **HOTSPOT-001** — Add a `__repr__` to `SOCWarden` that masks all but the last 4 chars of the API key to prevent accidental key exposure in debug logs/reprs
-7. **LOW-003** — Add client-side validation: reject `metadata` dicts deeper than 5 levels or larger than 64 KB; truncate `user_agent` to 512 chars
-8. **INFO-004** — Add optional `trusted_proxies: int` constructor argument to pick the correct IP from multi-hop `X-Forwarded-For` headers
-
-### Long-term (architectural)
-9. **MEDIUM-003** — Migrate async backoff state to use `asyncio.Lock` for applications that use only the async API, eliminating threading.Lock from the event loop path entirely
+**Priority 2 — Recommended follow-up:**
+5. **Atexit registration** (`client.py`) — add `atexit.register(self.close)` in `__init__` to flush pending events on normal interpreter exit.
+6. **Remove dead constants from middleware.py** — import `SDK_NAME`/`SDK_VERSION` from `client.py` rather than duplicating.
+7. **Extend redaction keyword list** — consider adding `otp`, `pin`, `bearer`, `api` to `_sanitize_query_string`'s `sensitive` tuple.
 
 ---
 
@@ -409,33 +308,21 @@ The SDK imposes no size limits on `metadata` dicts, `user_agent` strings, or `ac
 
 | Aspect | Details |
 |--------|---------|
-| Phases executed | 1 (Reconnaissance), 2 (White-box), 4 (Hotspots), 5 (Code Smells) |
-| Frameworks detected | Python SDK (httpx, threading, asyncio), WSGI (Flask, Django), ASGI (FastAPI/Starlette) |
-| White-box categories | All 20 OWASP categories checked; AI/LLM, WebSocket, gRPC, Serverless N/A |
-| Gray-box testing | Skipped — no live server; SDK is a library, not a running service |
-| Security hotspots | 3 identified: auth header, thread pool HTTP client, async/sync backoff state |
-| Code smells | 1 structural (dead code pattern in send_async) |
+| Phases executed | 1–5 (full) |
+| Frameworks detected | Python SDK; optional Flask 2+, Django 4+, FastAPI 0.100+/Starlette 0.27+ |
+| White-box categories | All 20 OWASP attack categories examined |
+| Gray-box testing | N/A — pure library SDK with no live server |
+| Security hotspots | 4 identified (crypto/auth boundary, input/output, third-party, error handling) |
+| Code smells | Structural (duplicated constants) |
 | Packs loaded | none |
-| Scope exclusions | none |
-| Baseline comparison | none |
-| OWASP Top 10:2025 | 10/10 categories reviewed; 5 had findings |
-| NIST CSF 2.0 | All 6 functions reviewed |
-| CWE | 7 unique CWE IDs identified |
-| SANS/CWE Top 25 | 2/25 matched (CWE-20 #6, CWE-400 #17) |
-| ASVS 5.0 | Chapters V5, V7, V12 checked |
+| Scope exclusions | .venv/, __pycache__/ excluded |
+| Baseline comparison | No prior baseline |
+| OWASP Top 10:2025 | 10/10 categories covered |
+| NIST CSF 2.0 | GV, ID, PR, DE, RS, RC |
+| CWE | 5 unique CWE IDs identified |
+| SANS/CWE Top 25 | 1/25 matched (CWE-20) |
+| ASVS 5.0 | V5, V7, V13, V14 chapters checked |
 | Additional frameworks | PCI DSS 4.0.1, MITRE ATT&CK, SOC 2, ISO 27001:2022 |
-
-**Files audited**:
-- `socwarden/__init__.py`
-- `socwarden/client.py`
-- `socwarden/middleware.py`
-- `socwarden/builder.py`
-- `socwarden/types.py`
-- `tests/test_client.py`
-- `tests/test_contract.py`
-- `pyproject.toml`
-
-**Dependency audit**: `pip-audit 2.10.0` — **No known vulnerabilities** found in dependency tree.
 
 ---
 

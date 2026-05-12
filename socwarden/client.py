@@ -442,6 +442,23 @@ class SOCWarden:
     # HTTP transport
     # ------------------------------------------------------------------
 
+    def _parse_retry_after(self, header_value: str, default: int) -> int:
+        """Parse a Retry-After header value into a clamped integer seconds.
+
+        RFC 7231 §7.1.3 allows the value to be either a delay-seconds integer
+        (e.g. ``"3600"``) or an HTTP-date string (e.g. ``"Mon, 12 May 2025
+        10:00:00 GMT"``).  Silently fall back to *default* for non-integer
+        values rather than letting ``int()`` raise ``ValueError`` and skip
+        the backoff entirely.
+
+        The result is clamped to ``[0, _max_backoff]`` regardless of source.
+        """
+        try:
+            raw = int(header_value)
+        except (ValueError, TypeError):
+            raw = default
+        return min(max(raw, 0), self._max_backoff)
+
     def _send(self, payload: EventPayload) -> dict[str, Any] | None:
         """Send a payload to the ingestor (synchronous, thread-safe)."""
         with self._lock:
@@ -462,8 +479,12 @@ class SOCWarden:
 
         if response.status_code == 429:
             # Clamp Retry-After to _max_backoff to prevent DoS via huge server-supplied values.
-            raw_retry = int(response.headers.get("Retry-After", self._backoff_duration))
-            retry_after = min(max(raw_retry, 0), self._max_backoff)
+            # RFC 7231 allows Retry-After as either a delay-seconds integer or an HTTP-date
+            # string.  Guard against ValueError from non-integer values so the backoff is
+            # always applied even when the server sends a date-format header.
+            retry_after = self._parse_retry_after(
+                response.headers.get("Retry-After", ""), self._backoff_duration
+            )
             with self._lock:
                 self._backoff_until = time.monotonic() + retry_after
             logger.warning("SOCWarden: quota exceeded (429). Backing off for %ds", retry_after)
@@ -471,8 +492,9 @@ class SOCWarden:
 
         if response.status_code >= 400:
             # Truncate response body to 512 chars to avoid writing large/sensitive server
-            # error payloads into application logs.
-            truncated = response.text[:512]
+            # error payloads into application logs.  Strip newlines to prevent log injection
+            # from a compromised or malicious ingestor endpoint.
+            truncated = response.text[:512].replace("\r", " ").replace("\n", " ")
             logger.warning(
                 "SOCWarden: event send failed (status=%d): %s",
                 response.status_code,
@@ -515,8 +537,12 @@ class SOCWarden:
 
         if response.status_code == 429:
             # Clamp Retry-After to _max_backoff to prevent DoS via huge server-supplied values.
-            raw_retry = int(response.headers.get("Retry-After", self._backoff_duration))
-            retry_after = min(max(raw_retry, 0), self._max_backoff)
+            # RFC 7231 allows Retry-After as either a delay-seconds integer or an HTTP-date
+            # string.  Guard against ValueError from non-integer values so the backoff is
+            # always applied even when the server sends a date-format header.
+            retry_after = self._parse_retry_after(
+                response.headers.get("Retry-After", ""), self._backoff_duration
+            )
             with self._lock:
                 self._backoff_until = time.monotonic() + retry_after
             logger.warning("SOCWarden: quota exceeded (429). Backing off for %ds", retry_after)
@@ -524,8 +550,9 @@ class SOCWarden:
 
         if response.status_code >= 400:
             # Truncate response body to 512 chars to avoid writing large/sensitive server
-            # error payloads into application logs.
-            truncated = response.text[:512]
+            # error payloads into application logs.  Strip newlines to prevent log injection
+            # from a compromised or malicious ingestor endpoint.
+            truncated = response.text[:512].replace("\r", " ").replace("\n", " ")
             logger.warning(
                 "SOCWarden: event send failed (status=%d): %s",
                 response.status_code,

@@ -644,3 +644,94 @@ class TestSecurityFixes:
         result = SOCWarden._sanitize_query_string("auth+token=abc&safe=yes")
         assert "abc" not in result
         assert "[REDACTED]" in result
+
+    # --- SEC-005: Retry-After date-format handling ---
+
+    def test_retry_after_date_format_falls_back_to_default(self) -> None:
+        """A date-format Retry-After (RFC 7231) must not raise ValueError and must
+        fall back to the default backoff duration rather than skipping the backoff."""
+        soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+        # Parse a date-string value: int() would raise ValueError here
+        result = soc._parse_retry_after("Mon, 12 May 2025 10:00:00 GMT", soc._backoff_duration)
+        assert result == soc._backoff_duration
+        soc.close()
+
+    def test_retry_after_empty_falls_back_to_default(self) -> None:
+        """An empty Retry-After header must fall back to the default backoff duration."""
+        soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+        result = soc._parse_retry_after("", soc._backoff_duration)
+        assert result == soc._backoff_duration
+        soc.close()
+
+    def test_retry_after_valid_integer_parsed(self) -> None:
+        """A valid integer Retry-After must be parsed and clamped correctly."""
+        soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+        assert soc._parse_retry_after("120", soc._backoff_duration) == 120
+        assert soc._parse_retry_after("999999999", soc._backoff_duration) == soc._max_backoff
+        assert soc._parse_retry_after("-5", soc._backoff_duration) == 0
+        soc.close()
+
+    def test_retry_after_date_format_does_not_crash_send(self) -> None:
+        """A date-format Retry-After must not crash _send() — backoff must be applied."""
+        mock_resp = make_mock_response(429, headers={"Retry-After": "Mon, 12 May 2025 10:00:00 GMT"})
+
+        fake_times = iter([0, 0])
+
+        with patch("socwarden.client.time.monotonic", side_effect=fake_times), \
+             patch.object(httpx.Client, "post", return_value=mock_resp):
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            payload = soc._build_payload("test.event", {})
+            soc._send(payload)
+            # Backoff must have been set (not left at 0)
+            assert soc._backoff_until > 0
+            soc.close()
+
+    # --- SEC-006: Log injection from server response body ---
+
+    def test_error_response_body_newlines_stripped_from_logs(self) -> None:
+        """Newlines in the server response body must be stripped before logging
+        to prevent log injection by a compromised ingestor endpoint."""
+        # Use actual newline/CR characters (not escaped literals)
+        injected_body = "error\nCRITICAL: injected fake log line\r\nend"
+        mock_resp = make_mock_response(500)
+        mock_resp.text = injected_body
+
+        logged_args: list[tuple] = []
+
+        with patch.object(httpx.Client, "post", return_value=mock_resp), \
+             patch("socwarden.client.logger") as mock_logger:
+            mock_logger.warning.side_effect = lambda fmt, *args: logged_args.append((fmt, args))
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            payload = soc._build_payload("test.event", {})
+            soc._send(payload)
+            soc.close()
+
+        assert logged_args, "Expected a warning log for 500 error"
+        # The body argument passed to logger.warning must not contain newlines or CRs
+        fmt, args = logged_args[0]
+        logged_body = args[-1] if args else ""
+        assert "\n" not in logged_body
+        assert "\r" not in logged_body
+
+    # --- SEC-007: Middleware IP validation ---
+
+    def test_middleware_invalid_xff_rejected(self) -> None:
+        """An invalid IP from X-Forwarded-For must not be stored in context."""
+        from socwarden.middleware import _validate_ip
+
+        assert _validate_ip("999.999.999.999") == ""
+        assert _validate_ip("not-an-ip") == ""
+        assert _validate_ip("' OR 1=1--") == ""
+
+    def test_middleware_valid_xff_accepted(self) -> None:
+        """A valid IP from X-Forwarded-For must be preserved in context."""
+        from socwarden.middleware import _validate_ip
+
+        assert _validate_ip("203.0.113.1") == "203.0.113.1"
+        assert _validate_ip("2001:db8::1") == "2001:db8::1"
+
+    def test_middleware_empty_ip_accepted(self) -> None:
+        """An empty IP (no XFF, no remote addr) must return empty string."""
+        from socwarden.middleware import _validate_ip
+
+        assert _validate_ip("") == ""

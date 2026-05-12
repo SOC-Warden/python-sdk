@@ -7,6 +7,7 @@ sent during a request.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -17,6 +18,22 @@ logger = logging.getLogger("socwarden")
 
 SDK_NAME = "socwarden-python"
 SDK_VERSION = "1.0.0"
+
+
+def _validate_ip(ip: str) -> str:
+    """Return *ip* unchanged if it is a valid IPv4 or IPv6 address, otherwise ``""``.
+
+    Middleware reads the source IP from X-Forwarded-For which is a user-controlled
+    header.  Validating the value ensures only well-formed addresses reach the
+    ingestor and prevents forged/invalid IP strings from polluting context data.
+    """
+    if not ip:
+        return ""
+    try:
+        ipaddress.ip_address(ip)
+        return ip
+    except ValueError:
+        return ""
 
 
 # ======================================================================
@@ -50,10 +67,13 @@ class SOCWardenFlask:
         try:
             from flask import request as flask_request
 
-            _request_context.ip = (
+            raw_ip = (
                 flask_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
                 or flask_request.remote_addr
+                or ""
             )
+            # Validate the IP so forged X-Forwarded-For values don't reach the ingestor.
+            _request_context.ip = _validate_ip(raw_ip)
             _request_context.user_agent = flask_request.headers.get("User-Agent", "")
             _request_context.method = flask_request.method
             _request_context.path = flask_request.path
@@ -154,11 +174,15 @@ class SOCWardenDjangoMiddleware:
 
     @staticmethod
     def _get_client_ip(request: Any) -> str:
-        """Extract client IP respecting X-Forwarded-For."""
+        """Extract client IP respecting X-Forwarded-For.
+
+        The raw value from X-Forwarded-For is user-controlled and validated
+        before use so that forged headers cannot inject invalid IP strings
+        into the SOCWarden context.
+        """
         xff = request.META.get("HTTP_X_FORWARDED_FOR")
-        if xff:
-            return xff.split(",")[0].strip()
-        return request.META.get("REMOTE_ADDR", "")
+        raw = xff.split(",")[0].strip() if xff else request.META.get("REMOTE_ADDR", "")
+        return _validate_ip(raw)
 
 
 # ======================================================================
@@ -194,34 +218,32 @@ class SOCWardenASGIMiddleware:
         for key, value in scope.get("headers", []):
             headers[key.decode("latin-1").lower()] = value.decode("latin-1")
 
-        # Extract client IP
-        client = scope.get("client")
-        ip = ""
-        xff = headers.get("x-forwarded-for")
-        if xff:
-            ip = xff.split(",")[0].strip()
-        elif client:
-            ip = client[0]
+        # Extract client IP — validate the value so forged X-Forwarded-For headers
+        # cannot inject invalid IP strings into the SOCWarden context.
+        asgi_client = scope.get("client")
+        raw_xff = headers.get("x-forwarded-for", "")
+        raw_ip = raw_xff.split(",")[0].strip() if raw_xff else (asgi_client[0] if asgi_client else "")
 
-        # Set request context
-        _request_context.ip = ip
-        _request_context.user_agent = headers.get("user-agent", "")
-        _request_context.method = scope.get("method", "")
-        _request_context.path = scope.get("path", "")
-        _request_context.query_string = (scope.get("query_string", b"") or b"").decode(
-            "utf-8", errors="replace"
-        )
-        _request_context.referer = headers.get("referer", "")
-        _request_context.origin = headers.get("origin", "")
-        _request_context.content_type = headers.get("content-type", "")
-        _request_context.accept_language = headers.get("accept-language", "")
-        _request_context.request_id = (
-            headers.get("x-request-id", "") or headers.get("x-correlation-id", "")
-        )
-        # D1 FIX: X-SOCWarden-Context header removed — trusting arbitrary HTTP headers
-        # allows any client to spoof server-side metadata.
-
+        # Set request context inside try/finally so clear() is guaranteed even
+        # if any assignment raises an unexpected exception.
         try:
+            _request_context.ip = _validate_ip(raw_ip)
+            _request_context.user_agent = headers.get("user-agent", "")
+            _request_context.method = scope.get("method", "")
+            _request_context.path = scope.get("path", "")
+            _request_context.query_string = (scope.get("query_string", b"") or b"").decode(
+                "utf-8", errors="replace"
+            )
+            _request_context.referer = headers.get("referer", "")
+            _request_context.origin = headers.get("origin", "")
+            _request_context.content_type = headers.get("content-type", "")
+            _request_context.accept_language = headers.get("accept-language", "")
+            _request_context.request_id = (
+                headers.get("x-request-id", "") or headers.get("x-correlation-id", "")
+            )
+            # D1 FIX: X-SOCWarden-Context header removed — trusting arbitrary HTTP headers
+            # allows any client to spoof server-side metadata.
+
             await self.app(scope, receive, send)
         finally:
             _request_context.clear()
