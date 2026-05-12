@@ -92,7 +92,7 @@ class SOCWardenDjangoMiddleware:
     Or configure via Django settings::
 
         SOCWARDEN_API_KEY = "sk_..."
-        SOCWARDEN_ENDPOINT = "https://ingest.socwarden.com"
+        SOCWARDEN_ENDPOINT = "https://ingestor.socwarden.com"
     """
 
     def __init__(self, get_response: Callable[..., Any]) -> None:
@@ -119,7 +119,7 @@ class SOCWardenDjangoMiddleware:
 
                 self._client = SOCWardenClient(
                     api_key=api_key,
-                    endpoint=getattr(settings, "SOCWARDEN_ENDPOINT", "https://ingest.socwarden.com"),
+                    endpoint=getattr(settings, "SOCWARDEN_ENDPOINT", "https://ingestor.socwarden.com"),
                 )
                 return self._client
         except Exception:

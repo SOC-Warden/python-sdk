@@ -152,10 +152,15 @@ class EventBuilder:
 
     async def send_async(self) -> None:
         """Send the event asynchronously."""
-        data = self._client._resolve_args()  # noqa: SLF001
-        data.update(self._data)
-        payload = self._client._build_payload(self._event, self._data)  # noqa: SLF001
-        await self._client._send_async(payload)  # noqa: SLF001
+        await self._client.track_async(  # noqa: SLF001
+            self._event,
+            actor_id=self._data.get("actor_id"),
+            actor_email=self._data.get("actor_email"),
+            ip=self._data.get("ip"),
+            user_agent=self._data.get("user_agent"),
+            metadata=self._data.get("metadata"),
+            timestamp=self._data.get("timestamp"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return the built payload as a dict (for testing/inspection)."""

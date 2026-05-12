@@ -43,7 +43,7 @@ class SOCWarden:
     def __init__(
         self,
         api_key: str,
-        endpoint: str = "https://ingest.socwarden.com",
+        endpoint: str = "https://ingestor.socwarden.com",
         *,
         timeout: float = 5.0,
         max_workers: int = 4,
@@ -72,6 +72,8 @@ class SOCWarden:
         self._backoff_duration: int = 3600  # 1 hour default
         self._probe_interval: int = 300  # 5 min probe
         self._last_probe: float = 0.0
+        # Maximum Retry-After value accepted to prevent DoS via huge server-side values.
+        self._max_backoff: int = 86400  # 24 hours
 
         # Background sender
         self._executor = ThreadPoolExecutor(
@@ -233,17 +235,21 @@ class SOCWarden:
         self._executor.shutdown(wait=True)
         self._http.close()
         if self._async_http is not None:
-            # Async client must be closed in an async context; best-effort
+            # Async client must be closed in an async context; best-effort.
+            # Use asyncio.get_running_loop() (Python 3.7+, no DeprecationWarning) instead
+            # of the deprecated asyncio.get_event_loop() which raises RuntimeError in
+            # Python 3.12+ when no current event loop exists.
             try:
                 import asyncio
 
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
+                try:
+                    loop = asyncio.get_running_loop()
                     loop.create_task(self._async_http.aclose())
-                else:
-                    loop.run_until_complete(self._async_http.aclose())
-            except Exception:
-                pass
+                except RuntimeError:
+                    # No running event loop — create a new one to close cleanly.
+                    asyncio.run(self._async_http.aclose())
+            except Exception as exc:
+                logger.debug("SOCWarden: failed to close async HTTP client: %s", exc)
 
     def __enter__(self) -> "SOCWarden":
         return self
@@ -411,15 +417,21 @@ class SOCWarden:
         Parameters whose names contain any of the sensitive keywords have
         their values replaced with ``[REDACTED]``.  Mirrors the Laravel SDK
         sanitization behaviour.
+
+        Parameter names are URL-decoded before the keyword check so that
+        percent-encoded variants such as ``P%61ssword`` are still caught.
         """
         if not qs:
             return ""
+
+        from urllib.parse import unquote_plus
 
         sensitive = ("token", "key", "password", "secret", "code", "auth", "session", "csrf")
         parts: list[str] = []
         for pair in qs.split("&"):
             kv = pair.split("=", 1)
-            param_name = kv[0].lower()
+            # Decode the param name before keyword matching to catch percent-encoded bypasses.
+            param_name = unquote_plus(kv[0]).lower()
             if len(kv) == 2 and any(s in param_name for s in sensitive):
                 parts.append(f"{kv[0]}=[REDACTED]")
             else:
@@ -449,17 +461,22 @@ class SOCWarden:
             return None
 
         if response.status_code == 429:
-            retry_after = int(response.headers.get("Retry-After", self._backoff_duration))
+            # Clamp Retry-After to _max_backoff to prevent DoS via huge server-supplied values.
+            raw_retry = int(response.headers.get("Retry-After", self._backoff_duration))
+            retry_after = min(max(raw_retry, 0), self._max_backoff)
             with self._lock:
                 self._backoff_until = time.monotonic() + retry_after
             logger.warning("SOCWarden: quota exceeded (429). Backing off for %ds", retry_after)
             return None
 
         if response.status_code >= 400:
+            # Truncate response body to 512 chars to avoid writing large/sensitive server
+            # error payloads into application logs.
+            truncated = response.text[:512]
             logger.warning(
                 "SOCWarden: event send failed (status=%d): %s",
                 response.status_code,
-                response.text,
+                truncated,
             )
             return None
 
@@ -473,9 +490,15 @@ class SOCWarden:
         return response.json()
 
     async def _send_async(self, payload: EventPayload) -> dict[str, Any] | None:
-        """Send a payload to the ingestor (async)."""
+        """Send a payload to the ingestor (async).
+
+        The threading.Lock is acquired only for brief attribute reads/writes
+        and is always released before any ``await`` so it never blocks the
+        event loop during I/O.
+        """
         client = self._get_async_client()
 
+        # Lock released before await — no event-loop blocking during I/O.
         with self._lock:
             now = time.monotonic()
             if now < self._backoff_until:
@@ -491,17 +514,22 @@ class SOCWarden:
             return None
 
         if response.status_code == 429:
-            retry_after = int(response.headers.get("Retry-After", self._backoff_duration))
+            # Clamp Retry-After to _max_backoff to prevent DoS via huge server-supplied values.
+            raw_retry = int(response.headers.get("Retry-After", self._backoff_duration))
+            retry_after = min(max(raw_retry, 0), self._max_backoff)
             with self._lock:
                 self._backoff_until = time.monotonic() + retry_after
             logger.warning("SOCWarden: quota exceeded (429). Backing off for %ds", retry_after)
             return None
 
         if response.status_code >= 400:
+            # Truncate response body to 512 chars to avoid writing large/sensitive server
+            # error payloads into application logs.
+            truncated = response.text[:512]
             logger.warning(
                 "SOCWarden: event send failed (status=%d): %s",
                 response.status_code,
-                response.text,
+                truncated,
             )
             return None
 
@@ -514,7 +542,13 @@ class SOCWarden:
         return response.json()
 
     def _get_async_client(self) -> httpx.AsyncClient:
-        """Lazily create the async HTTP client."""
+        """Lazily create the async HTTP client.
+
+        Uses double-checked locking with a threading.Lock for one-time
+        initialization only.  The lock is never held across an ``await``,
+        so it cannot block the event loop during I/O.  After the first call
+        the fast-path (``self._async_http is not None``) is lock-free.
+        """
         if self._async_http is None:
             with self._async_lock:
                 if self._async_http is None:

@@ -524,3 +524,123 @@ class TestRequestContext:
         soc.close()
 
         assert "request" not in context
+
+
+# ---------------------------------------------------------------------------
+# Security regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityFixes:
+    # --- SEC-001: Retry-After clamping ---
+
+    def test_retry_after_clamped_to_max_backoff(self) -> None:
+        """A huge Retry-After value from a malicious server must be clamped
+        to _max_backoff (24 h) so the SDK cannot be DoS-silenced indefinitely."""
+        mock_resp = make_mock_response(429, headers={"Retry-After": "999999999"})
+
+        fake_times = iter([0, 0, 99999])
+
+        with patch("socwarden.client.time.monotonic", side_effect=fake_times), \
+             patch.object(httpx.Client, "post", return_value=mock_resp):
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            payload = soc._build_payload("test.event", {})
+            soc._send(payload)
+
+            # backoff_until should be capped at max_backoff (86400 s from t=0)
+            assert soc._backoff_until <= soc._max_backoff + 1  # +1 for monotonic drift
+            soc.close()
+
+    def test_retry_after_negative_treated_as_zero(self) -> None:
+        """A negative Retry-After should be clamped to 0 (no backoff)."""
+        mock_resp = make_mock_response(429, headers={"Retry-After": "-100"})
+
+        fake_times = iter([0, 0])
+
+        with patch("socwarden.client.time.monotonic", side_effect=fake_times), \
+             patch.object(httpx.Client, "post", return_value=mock_resp):
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            payload = soc._build_payload("test.event", {})
+            soc._send(payload)
+
+            # backoff_until should be 0 (now + 0)
+            assert soc._backoff_until == 0
+            soc.close()
+
+    # --- SEC-002: response.text truncation ---
+
+    def test_error_response_body_truncated_in_logs(self) -> None:
+        """A large error response body must not be written verbatim to the log;
+        it is silently truncated to 512 characters."""
+        large_body = "X" * 10_000
+        mock_resp = make_mock_response(500)
+        mock_resp.text = large_body
+
+        logged_messages: list[str] = []
+
+        with patch.object(httpx.Client, "post", return_value=mock_resp), \
+             patch("socwarden.client.logger") as mock_logger:
+            mock_logger.warning.side_effect = lambda fmt, *args: logged_messages.append(
+                fmt % args if args else fmt
+            )
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            payload = soc._build_payload("test.event", {})
+            soc._send(payload)
+            soc.close()
+
+        assert logged_messages, "Expected a warning to be logged for the 500 error"
+        # The logged body fragment should be truncated to at most 512 chars
+        body_in_log = logged_messages[0].split(":", 2)[-1].strip()
+        assert len(body_in_log) <= 512
+
+    # --- SEC-003: EventBuilder.send_async validates event type ---
+
+    def test_event_builder_send_async_validates_event_type(self) -> None:
+        """EventBuilder.send_async() must not bypass event type validation.
+        An invalid event type should be dropped (no HTTP call made)."""
+        import asyncio
+
+        with patch.object(httpx.AsyncClient, "post") as mock_async_post, \
+             patch.object(httpx.Client, "post") as mock_sync_post:
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            builder = soc.event("INVALID EVENT TYPE!!!")
+
+            asyncio.run(builder.send_async())
+            soc.close()
+
+        # No HTTP call should have been made for an invalid event type
+        mock_async_post.assert_not_called()
+        mock_sync_post.assert_not_called()
+
+    def test_event_builder_send_async_valid_event_type_sends(self) -> None:
+        """EventBuilder.send_async() must send valid events."""
+        import asyncio
+
+        mock_resp = make_mock_response(202)
+
+        with patch.object(httpx.AsyncClient, "post", return_value=mock_resp) as mock_async_post:
+            soc = SOCWarden(api_key="sk_test_123", endpoint="https://test.local")
+            builder = soc.event("auth.login.success").actor_id("usr_1")
+
+            asyncio.run(builder.send_async())
+            soc.close()
+
+        mock_async_post.assert_called_once()
+        payload = mock_async_post.call_args.kwargs.get("json") or mock_async_post.call_args[1]["json"]
+        assert payload["event"] == "auth.login.success"
+        assert payload["source"] == "sdk"
+
+    # --- SEC-004: URL-encoded query param name bypass ---
+
+    def test_sanitize_query_string_catches_url_encoded_param_name(self) -> None:
+        """Percent-encoded parameter names like P%61ssword must still be redacted."""
+        result = SOCWarden._sanitize_query_string("P%61ssword=secret&safe=yes")
+        assert "secret" not in result
+        assert "[REDACTED]" in result
+        assert "safe=yes" in result
+
+    def test_sanitize_query_string_catches_plus_encoded_param_name(self) -> None:
+        """Plus-encoded (application/x-www-form-urlencoded) param names are decoded."""
+        result = SOCWarden._sanitize_query_string("auth+token=abc&safe=yes")
+        assert "abc" not in result
+        assert "[REDACTED]" in result
