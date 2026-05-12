@@ -1,6 +1,6 @@
 # SOCWarden Python SDK
 
-Python SDK for [SOCWarden](https://socwarden.io) — security event tracking and threat detection.
+Python SDK for [SOCWarden](https://socwarden.com) — security event tracking and threat detection.
 
 ## Installation
 
@@ -156,7 +156,7 @@ Or configure via settings keys:
 ```python
 # settings.py
 SOCWARDEN_API_KEY = "sk_live_..."
-SOCWARDEN_ENDPOINT = "https://ingest.socwarden.io"
+SOCWARDEN_ENDPOINT = "https://ingest.socwarden.com"
 
 MIDDLEWARE = [
     "socwarden.middleware.SOCWardenDjangoMiddleware",
@@ -209,7 +209,7 @@ Examples:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `api_key` | (required) | Bearer token for the ingestor API |
-| `endpoint` | `https://ingest.socwarden.io` | Ingestor base URL |
+| `endpoint` | `https://ingest.socwarden.com` | Ingestor base URL |
 | `timeout` | `5.0` | HTTP request timeout in seconds |
 | `max_workers` | `4` | Background thread pool size |
 | `auto_context` | `True` | Attach SDK/server context to events |

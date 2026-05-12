@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "SOCWarden", email = "support@socwarden.io" },
+    { name = "SOCWarden", email = "support@socwarden.com" },
 ]
 keywords = ["security", "soc", "siem", "event-tracking", "threat-detection"]
 classifiers = [
@@ -35,8 +35,8 @@ django = ["django>=4.0"]
 fastapi = ["fastapi>=0.100", "starlette>=0.27"]
 
 [project.urls]
-Homepage = "https://socwarden.io"
-Documentation = "https://docs.socwarden.io/sdk/python"
+Homepage = "https://socwarden.com"
+Documentation = "https://docs.socwarden.com/sdk/python"
 Repository = "https://github.com/socwarden/python-sdk"
 
 [tool.hatch.build.targets.wheel]
